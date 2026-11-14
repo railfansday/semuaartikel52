@@ -354,15 +354,13 @@ def generate_news_schema(chunk, page_url):
     }
     return f'<script type="application/ld+json">{json.dumps(itemListSchema, ensure_ascii=False)}</script>\n<script type="application/ld+json">{json.dumps(breadcrumb, ensure_ascii=False)}</script>'
 
-def generate_rss_feeds_per_category(rows):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    now_rfc = format_datetime(datetime.now())
-    
-    # 1. Main Feed
+def generate_rss_feed(rows):
+    rss_path = os.path.join(OUTPUT_DIR, "feed.xml")
     latest_rows = sorted(rows, key=lambda x: x[0], reverse=True)[:30]
+    now_rfc = format_datetime(datetime.now())
     items_xml = []
     for row in latest_rows:
-        artikel_id, judul, konten, _, _, _, _ = row
+        artikel_id, judul, konten, _, tanggal_publish, _, _ = row
         soup = BeautifulSoup(konten, 'html.parser')
         desc = soup.get_text(" ", strip=True)[:280]
         safe_title = judul.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -375,8 +373,7 @@ def generate_rss_feeds_per_category(rows):
             <guid>{item_url}</guid>
             <description>{safe_desc}...</description>
         </item>""")
-    
-    main_rss = f"""<?xml version="1.0" encoding="UTF-8" ?>
+    rss_content = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <rss version="2.0">
 <channel>
     <title>Portal Berita Interaktif - Latest News Feed</title>
@@ -386,43 +383,8 @@ def generate_rss_feeds_per_category(rows):
     {''.join(items_xml)}
 </channel>
 </rss>"""
-    with open(os.path.join(OUTPUT_DIR, "feed.xml"), "w", encoding="utf-8") as f:
-        f.write(main_rss)
-
-    # 2. Category Feeds
-    for cat in CATEGORY_RULES.keys():
-        cat_rows = [r for r in rows if detect_category(r[1]) == cat][:15]
-        if not cat_rows:
-            continue
-        cat_items = []
-        for row in cat_rows:
-            artikel_id, judul, konten, _, _, _, _ = row
-            soup = BeautifulSoup(konten, 'html.parser')
-            desc = soup.get_text(" ", strip=True)[:280]
-            safe_title = judul.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            safe_desc = desc.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            item_url = f"{BASE_URL}/index.html#artikel-{artikel_id}"
-            cat_items.append(f"""
-            <item>
-                <title>{safe_title}</title>
-                <link>{item_url}</link>
-                <guid>{item_url}</guid>
-                <description>{safe_desc}...</description>
-            </item>""")
-        
-        cat_filename = f"feed-{cat.lower().replace(' & ', '-').replace(' ', '-')}.xml"
-        cat_rss = f"""<?xml version="1.0" encoding="UTF-8" ?>
-<rss version="2.0">
-<channel>
-    <title>Portal Berita - {cat}</title>
-    <link>{BASE_URL}/</link>
-    <description>Curated news feed for {cat}.</description>
-    <lastBuildDate>{now_rfc}</lastBuildDate>
-    {''.join(cat_items)}
-</channel>
-</rss>"""
-        with open(os.path.join(OUTPUT_DIR, cat_filename), "w", encoding="utf-8") as f:
-            f.write(cat_rss)
+    with open(rss_path, "w", encoding="utf-8") as f:
+        f.write(rss_content)
 
 ADSTERRA_CODE = """
 <div style="text-align:center; margin:20px 0;">
@@ -475,11 +437,6 @@ def export_backend_reports(total_baru, total_duplikat):
         backup_path = os.path.join(OUTPUT_DIR, "database_backup.sqlite")
         shutil.copy(DB_PATH, backup_path)
         
-        # Vacuum database for efficiency
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute("VACUUM")
-        conn.close()
-
         report = {
             "lastBuild": datetime.now().isoformat(),
             "totalNewArticles": total_baru,
@@ -653,7 +610,7 @@ def generate_sitemap_and_robots(total_baru, total_duplikat):
     with open(robots_path, "w", encoding="utf-8") as f:
         f.write(robots_content)
 
-    generate_rss_feeds_per_category(articles)
+    generate_rss_feed(articles)
     export_backend_reports(total_baru, total_duplikat)
 
 def export_to_two_files():
@@ -1174,8 +1131,6 @@ def export_to_two_files():
                 <span id="streakBadge" style="font-size:12px; font-weight:700; color:var(--primary); background:var(--badge-bg); padding:6px 10px; border-radius:8px;">🔥 Streak: 1 Days</span>
                 <button class="ctrl-btn" onclick="openRandomArticle()">🎲 Surprise Me</button>
                 <button class="ctrl-btn" onclick="exportHistoryJSON()">💾 Export History</button>
-                <button class="ctrl-btn" onclick="openSpeedTestModal()">⚡ Speed Test</button>
-                <input type="color" id="customColorPicker" title="Pilih Warna Tema Kustom" onchange="applyCustomColor(this.value)" style="width:32px; height:32px; border:none; cursor:pointer; background:none; vertical-align:middle;">
                 <a href="feed.xml" target="_blank" class="ctrl-btn" style="text-decoration:none;">📡 RSS</a>
                 <button class="ctrl-btn" id="themeBtn" onclick="cycleThemeMode()">🌙 Theme</button>
             </div>
@@ -1309,22 +1264,6 @@ def export_to_two_files():
         </div>
     </div>
 
-    <!-- Speed Test Modal -->
-    <div id="speedTestModal" class="modal">
-        <div class="modal-content" style="max-width: 450px; text-align: center; padding: 30px;">
-            <h3>⚡ Uji Kecepatan Membaca (WPM)</h3>
-            <p style="color: var(--text-muted); font-size: 14px;">Klik "Mulai", lalu klik "Selesai" setelah Anda selesai membaca teks singkat ini di bawah:</p>
-            <div id="speedTestBox" style="background: var(--bg-color); padding: 15px; border-radius: 8px; margin: 15px 0; font-size: 14px; line-height: 1.6; text-align: left;">
-                Membaca adalah jembatan ilmu pengetahuan yang membuka wawasan luas terhadap teknologi, sains, dan peradaban dunia modern. Dengan melatih kecepatan dan pemahaman, kita dapat menyerap informasi bernilai tinggi dengan lebih efektif setiap hari.
-            </div>
-            <div id="speedTestControls">
-                <button class="btn" onclick="startSpeedTestTimer()">Mulai Tes</button>
-                <button class="ctrl-btn" onclick="closeSpeedTestModal()">Tutup</button>
-            </div>
-            <div id="speedTestResult" style="margin-top: 15px; font-weight: bold; color: var(--primary);"></div>
-        </div>
-    </div>
-
     <script>
         let currentCategory = 'All';
         let modalFontSize = 16;
@@ -1336,7 +1275,6 @@ def export_to_two_files():
         let wpmSpeeds = [150, 200, 300];
         let currentWpmIdx = 1;
         let autoScrollInterval = null;
-        let speedTestStartTime = null;
 
         function getSavedIds() {{
             try {{ return JSON.parse(localStorage.getItem('savedArticles') || '[]'); }} catch (e) {{ return []; }}
@@ -1371,53 +1309,6 @@ def export_to_two_files():
             a.href = url;
             a.download = 'reader_history_backup.json';
             a.click();
-        }}
-
-        function openSpeedTestModal() {{
-            document.getElementById('speedTestModal').style.display = 'flex';
-            document.getElementById('speedTestResult').innerText = '';
-        }}
-
-        function closeSpeedTestModal() {{
-            document.getElementById('speedTestModal').style.display = 'none';
-        }}
-
-        function startSpeedTestTimer() {{
-            speedTestStartTime = new Date().getTime();
-            let controls = document.getElementById('speedTestControls');
-            controls.innerHTML = '<button class="btn" onclick="finishSpeedTestTimer()" style="background:#10b981;">Selesai Membaca</button>';
-        }}
-
-        function finishSpeedTestTimer() {{
-            let endTime = new Date().getTime();
-            let diffSec = (endTime - speedTestStartTime) / 1000;
-            if (diffSec < 1) diffSec = 1;
-            // Teks tes memiliki ~35 kata
-            let wpm = Math.round((35 / diffSec) * 60);
-            document.getElementById('speedTestResult').innerText = `Kecepatan Anda: ${wpm} WPM!`;
-            
-            // Set ke WPM terdekat
-            if (wpm < 180) currentWpmIdx = 0;
-            else if (wpm < 250) currentWpmIdx = 1;
-            else currentWpmIdx = 2;
-            document.getElementById('wpmLabel').innerText = wpmSpeeds[currentWpmIdx];
-
-            setTimeout(() => {{
-                closeSpeedTestModal();
-                document.getElementById('speedTestControls').innerHTML = '<button class="btn" onclick="startSpeedTestTimer()">Mulai Tes</button><button class="ctrl-btn" onclick="closeSpeedTestModal()">Tutup</button>';
-            }, 2500);
-        }}
-
-        function applyCustomColor(color) {{
-            document.documentElement.style.setProperty('--primary', color);
-            localStorage.setItem('customPrimaryColor', color);
-        }}
-
-        let savedColor = localStorage.getItem('customPrimaryColor');
-        if (savedColor) {{
-            document.documentElement.style.setProperty('--primary', savedColor);
-            let picker = document.getElementById('customColorPicker');
-            if (picker) picker.value = savedColor;
         }}
 
         function startVoiceSearch() {{
@@ -1533,6 +1424,7 @@ def export_to_two_files():
             else btn.innerText = '☀️ Light';
         }}
 
+        // Auto Night Shift & Theme Init
         let savedTheme = localStorage.getItem('themeMode');
         if (!savedTheme && new Date().getHours() >= 18) {{
             savedTheme = 'dark';
@@ -1905,7 +1797,7 @@ def scrape_massive_rss():
     print("\n[*] Generate Katalog HTML (index.html & page2.html)...")
     export_to_two_files()
     
-    print("\n[*] Generate sitemap.xml, robots.txt, multi-channel feeds & reports...")
+    print("\n[*] Generate sitemap.xml, robots.txt, feed.xml & reports...")
     generate_sitemap_and_robots(total_baru, total_duplikat)
     
     print("\n" + "="*45)
